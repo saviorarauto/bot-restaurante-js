@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<title>Mineirinho Bot</title>
+
+<style>
+body {
+    font-family: Arial, sans-serif;
+    background: #f5f5f5;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+}
+
+.card {
+    background: white;
+    padding: 30px;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(0,0,0,.1);
+    text-align: center;
+    width: 100%;
+    max-width: 450px; /* Segura a largura do card pra não esticar demais */
+    box-sizing: border-box;
+}
+
+img {
+    width: 300px;
+    height: 300px;
+    display: block;   /* Transforma a imagem num bloco */
+    margin: 0 auto;   /* Força as margens a se dividirem igualmente (centraliza perfeitamente) */
+}
+
+.status {
+    margin-top: 20px;
+    font-size: 20px;
+    font-weight: bold;
+}
+
+.online {
+    color: green;
+}
+
+.offline {
+    color: red;
+}
+</style>
+
+</head>
+
+<body>
+
+<div class="card">
+
+    <h1>🤠 Mineirinho Bot</h1>
+
+    <img id="qr" src="/qr.png">
+
+    <div class="status" id="status">
+        Verificando conexão...
+    </div>
+
+    <div style="margin-top: 15px;">
+        <button id="toggleBotBtn" onclick="toggleBot()" style="background-color: #28a745; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; font-weight: bold; width: 100%; transition: 0.3s;">
+            🟢 Robô Ativado (Clique para Pausar)
+        </button>
+    </div>
+
+    <div style="margin-top: 15px;">
+        <button onclick="window.location.href='/simulacao.html'" style="background-color: #075e54; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; font-weight: bold; width: 100%; transition: 0.3s;">
+            🧪 Abrir Modo Simulação
+        </button>
+    </div>
+
+    <div id="logs-container" style="margin: 30px auto 0 auto; box-sizing: border-box; width: 100%; background: #333; color: #0f0; font-family: monospace; padding: 15px; border-radius: 8px; text-align: left; font-size: 12px; height: 150px; overflow-y: auto; box-shadow: inset 0 0 10px #000;">
+        <div style="border-bottom: 1px solid #444; padding-bottom: 5px; margin-bottom: 5px; font-weight: bold; display: flex; justify-content: space-between;">
+            <span>🖥️ LOGS DO SISTEMA</span>
+            <span id="log-status" style="color: #888;">Monitorando...</span>
+        </div>
+        <div id="log-content"></div>
+    </div>
+
+</div>
+
+<script>
+    // Adicionar escuta de logs via Electron
+    try {
+        const { ipcRenderer } = require('electron');
+        const logContent = document.getElementById('log-content');
+        
+        ipcRenderer.on('system-log', (event, log) => {
+            const div = document.createElement('div');
+            div.style.color = log.type === 'error' ? '#ff5555' : (log.type === 'warn' ? '#ffff55' : '#00ff00');
+            div.innerHTML = `[${log.timestamp}] ${log.message}`;
+            logContent.appendChild(div);
+            logContent.parentElement.scrollTop = logContent.parentElement.scrollHeight;
+        });
+    } catch (e) {
+        console.log('Não está rodando em ambiente Electron ou nodeIntegration desativado.');
+    }
+</script>
+
+<script>
+let isBotAtivo = true;
+
+async function atualizarStatus(){
+    const res = await fetch('/status');
+    const data = await res.json();
+
+    const status = document.getElementById('status');
+    const qr = document.getElementById('qr');
+
+    if(data.connected){
+        status.innerHTML = '✅ WhatsApp conectado';
+        status.className = 'status online';
+        qr.style.display = 'none';
+    }else{
+        status.innerHTML = '📱 Escaneie o QR Code';
+        status.className = 'status offline';
+
+        if (data.qr) {
+            qr.style.display = 'block';
+            qr.src = data.qr;
+        } else {
+            qr.style.display = 'none';
+        }
+    }
+
+    // Sincroniza o botão de pause/play com o servidor
+    if (data.botAtivo !== undefined && data.botAtivo !== isBotAtivo) {
+        atualizarBotaoVisual(data.botAtivo);
+    }
+}
+
+function atualizarBotaoVisual(ativo) {
+    isBotAtivo = ativo;
+    const btn = document.getElementById('toggleBotBtn');
+    if(ativo) {
+        btn.style.backgroundColor = '#28a745';
+        btn.innerHTML = '🟢 Robô Ativado (Clique para Pausar)';
+    } else {
+        btn.style.backgroundColor = '#dc3545';
+        btn.innerHTML = '🔴 Robô Pausado (Clique para Ativar)';
+    }
+}
+
+async function toggleBot() {
+    isBotAtivo = !isBotAtivo;
+    try {
+        const res = await fetch('/toggle-bot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ativo: isBotAtivo })
+        });
+        const data = await res.json();
+        atualizarBotaoVisual(data.botAtivo);
+    } catch(e) {
+        alert("Erro ao tentar pausar/ativar o robô!");
+    }
+}
+
+setInterval(atualizarStatus, 2000);
+atualizarStatus();
+
+</script>
+
+</body>
+</html>

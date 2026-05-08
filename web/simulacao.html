@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mineirinho - Simulação</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #e5ddd5;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        .header {
+            background-color: #075e54;
+            color: white;
+            padding: 15px;
+            display: flex;
+            align-items: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 18px;
+            flex-grow: 1;
+        }
+        .back-btn {
+            background: none;
+            border: none;
+            color: white;
+            cursor: pointer;
+            font-size: 20px;
+            margin-right: 15px;
+        }
+        #chat-container {
+            flex-grow: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .message {
+            max-width: 80%;
+            padding: 10px 15px;
+            border-radius: 10px;
+            font-size: 14px;
+            line-height: 1.4;
+            position: relative;
+        }
+        .bot {
+            background-color: white;
+            align-self: flex-start;
+            border-bottom-left-radius: 2px;
+        }
+        .user {
+            background-color: #dcf8c6;
+            align-self: flex-end;
+            border-bottom-right-radius: 2px;
+        }
+        .input-area {
+            background-color: #f0f0f0;
+            padding: 10px;
+            display: flex;
+            gap: 10px;
+        }
+        input {
+            flex-grow: 1;
+            padding: 10px;
+            border: none;
+            border-radius: 20px;
+            outline: none;
+        }
+        button#send-btn {
+            background-color: #075e54;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .typing {
+            font-style: italic;
+            color: #666;
+            font-size: 12px;
+            margin-bottom: 5px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <button class="back-btn" onclick="window.location.href='/'">←</button>
+        <h1>🤠 Mineirinho (Simulação)</h1>
+    </div>
+    
+    <div id="chat-container">
+        <!-- Mensagens aparecerão aqui -->
+    </div>
+    
+    <div id="typing-indicator" class="typing" style="margin-left: 20px;">Mineirinho está escrevendo...</div>
+
+    <div class="input-area">
+        <input type="text" id="message-input" placeholder="Digite uma mensagem..." autocomplete="off">
+        <button id="send-btn">➤</button>
+    </div>
+
+    <!-- ÁREA DE LOGS DO SISTEMA -->
+    <div id="logs-container" style="background: #222; color: #0f0; font-family: monospace; padding: 10px; font-size: 11px; height: 100px; overflow-y: auto; border-top: 1px solid #444;">
+        <div style="font-weight: bold; color: #888; margin-bottom: 5px;">🖥️ LOGS DE DEPURAÇÃO:</div>
+        <div id="log-content"></div>
+    </div>
+
+    <script>
+        const chatContainer = document.getElementById('chat-container');
+        // ... (resto do script)
+        const messageInput = document.getElementById('message-input');
+        const sendBtn = document.getElementById('send-btn');
+        const typingIndicator = document.getElementById('typing-indicator');
+
+        function addMessage(text, sender) {
+            const div = document.createElement('div');
+            div.className = `message ${sender}`;
+            div.innerText = text;
+            chatContainer.appendChild(div);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const text = messageInput.value.trim();
+            if (!text) return;
+
+            addMessage(text, 'user');
+            messageInput.value = '';
+            
+            typingIndicator.style.display = 'block';
+
+            try {
+                // Timeout aumentado para 30 segundos para suportar cálculos de rota longos ou APIs lentas
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+                const response = await fetch('/simular', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text }),
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+                const data = await response.json();
+                
+                typingIndicator.style.display = 'none';
+                addMessage(data.reply, 'bot');
+            } catch (err) {
+                typingIndicator.style.display = 'none';
+                addMessage('Erro ao conectar com o Mineirinho.', 'bot');
+            }
+        }
+
+        sendBtn.onclick = sendMessage;
+        messageInput.onkeypress = (e) => { if (e.key === 'Enter') sendMessage(); };
+
+        // Iniciar conversa
+        window.onload = async () => {
+            typingIndicator.style.display = 'block';
+            const response = await fetch('/simular', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: '' })
+            });
+            const data = await response.json();
+            typingIndicator.style.display = 'none';
+            addMessage(data.reply, 'bot');
+        };
+
+        // Escuta de logs via Electron
+        try {
+            const { ipcRenderer } = require('electron');
+            const logContent = document.getElementById('log-content');
+            ipcRenderer.on('system-log', (event, log) => {
+                const div = document.createElement('div');
+                div.style.color = log.type === 'error' ? '#ff5555' : (log.type === 'warn' ? '#ffff55' : '#00ff00');
+                div.innerHTML = `[${log.timestamp}] ${log.message}`;
+                logContent.appendChild(div);
+                logContent.parentElement.scrollTop = logContent.parentElement.scrollHeight;
+            });
+        } catch (e) {}
+    </script>
+</body>
+</html>

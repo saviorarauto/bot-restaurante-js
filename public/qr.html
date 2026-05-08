@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<title>Mineirinho Bot</title>
+
+<style>
+body{
+    background:#f5f5f5;
+    font-family:Arial;
+    text-align:center;
+    padding-top:40px;
+}
+
+.card{
+    background:white;
+    width:400px;
+    margin:auto;
+    padding:30px;
+    border-radius:12px;
+    box-shadow:0 0 10px rgba(0,0,0,0.1);
+}
+
+img{
+    width:300px;
+}
+
+.status{
+    margin-top:20px;
+    font-size:18px;
+}
+</style>
+</head>
+
+<body>
+
+<div class="card">
+    <h1>🤠 Mineirinho Bot</h1>
+
+    <div id="conteudo">
+        <p>Gerando QR Code...</p>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <div style="margin-top: 30px;">
+        <button onclick="window.location.href='/simulacao.html'" style="background-color: #075e54; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold;">
+            🧪 Abrir Modo Simulação
+        </button>
+    </div>
+</div>
+
+<script>
+
+async function atualizar() {
+
+    try{
+
+        const res = await fetch('/status');
+        const data = await res.json();
+
+        if(data.connected){
+
+            document.getElementById('conteudo').innerHTML =
+                '<h2 style="color:green">✅ Bot conectado!</h2>';
+
+        }else{
+            if (data.qr) {
+                document.getElementById('conteudo').innerHTML =
+                    '<img src="' + data.qr + '">';
+            } else {
+                document.getElementById('conteudo').innerHTML =
+                    '<p>Gerando novo QR Code...</p>';
+            }
+        }
+
+    }catch(err){
+
+        console.log(err);
+
+    }
+
+}
+
+setInterval(atualizar,2000);
+atualizar();
+
+</script>
+
+</body>
+</html>
