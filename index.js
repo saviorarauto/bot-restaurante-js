@@ -56,7 +56,7 @@ function logSystem(message, type = 'info') {
     systemLogs.push(logEntry);
     if (systemLogs.length > 50) systemLogs.shift();
     console.log(`[${logEntry.timestamp}] [${type.toUpperCase()}] ${message}`);
-    // Opcional para o frontend buscar ativamente caso IPC não esteja disponível
+    if (mainWindow) mainWindow.webContents.send('system-log', logEntry);
 }
 
 let dbContatos = {};
@@ -82,7 +82,7 @@ if (fs.existsSync(cachePath)) {
     catch (err) { console.error('Erro ao limpar cache:', err.message); }
 }
 
-// CONFIGURAÇÃO (Agora com inatividade fixada em 15 minutos)
+// CONFIGURAÇÃO
 const CARDAPIO_API_URL = 'https://protein-prep.lovable.app/api/public/cardapio-do-dia';
 const TIMEOUT_DURATION = 15 * 60 * 1000; // 15 minutos de inatividade encerra a sessão
 const STARTUP_TIME = Math.floor(Date.now() / 1000);
@@ -537,7 +537,7 @@ async function processarTaxaEntrega(session, replyFunc, userId) {
 }
 
 
-// LÓGICA PRINCIPAL DE FLUXO (Adicionado 'hasMedia' na desestruturação dos contatos)
+// LÓGICA PRINCIPAL DE FLUXO
 async function processMessage(userId, text, rawBody, replyFunc, contactInfo = {}) {
     if (!botAtivo) return;
 
@@ -1021,7 +1021,6 @@ async function processMessage(userId, text, rawBody, replyFunc, contactInfo = {}
                 const cidadeUF = (session.endereco.cidade && session.endereco.uf) ? ` - ${session.endereco.cidade} - ${session.endereco.uf}` : ' - Resende - RJ';
                 msgFinal += `Bairro: ${session.endereco.bairro}${cidadeUF}`;
                 
-                // --- NOVO: FLUXO DO COMPROVANTE PIX ---
                 if (session.metodoPagamento === 'PIX') {
                     msgFinal += `\n\n-----------------------------------------------\n\n📲 *Chave PIX:* 65.448.226/0001-03\n\n*(Assim que transferir, manda a foto ou o arquivo do comprovante aqui pra nós confirmarmos e enviarmos pra cozinha, fazendo favor)* 📸`;
                     await replyFunc(msgFinal);
@@ -1038,11 +1037,10 @@ async function processMessage(userId, text, rawBody, replyFunc, contactInfo = {}
             break;
 
         case 'AGUARDAR_COMPROVANTE':
-            // Se o usuário mandou um arquivo/imagem ou apenas respondeu "ok/mandei/tá ai"
             const keywordsConf = ['ok', 'mandei', 'ta ai', 'tá ai', 'tá aí', 'pronto', 'enviei', 'feito'];
             if (contactInfo.hasMedia || keywordsConf.some(kw => text.includes(kw)) || isPositiveIntent(text)) {
                 await replyFunc('Comprovante recebido com sucesso, sô! Muito obrigado pela preferência. Seu pedido já tá no fogo! 🔥🤠');
-                delete userSessions[userId]; // Encerra a sessão
+                delete userSessions[userId];
             } else {
                 await replyFunc('Tô aguardando a foto ou arquivo do comprovante do PIX pra liberar seu pedido pra cozinha, sô! 📸 (Se já enviou, só me manda um "ok")');
             }
@@ -1050,7 +1048,7 @@ async function processMessage(userId, text, rawBody, replyFunc, contactInfo = {}
     }
 }
 
-// --- CONFIGURAÇÃO DO ELECTRON E EXPRESS COM BOAS PRÁTICAS DE SEGURANÇA ---
+// --- CONFIGURAÇÃO DO ELECTRON E EXPRESS ---
 let mainWindow;
 let conectado = false;
 let lastQrBase64 = null; 
@@ -1059,9 +1057,8 @@ function createWindow() {
     mainWindow = new BrowserWindow({
         width: 900, height: 850, autoHideMenuBar: true,
         webPreferences: { 
-            nodeIntegration: false,     // SEGURANÇA: Previne injeção de Node.js via XSS
-            contextIsolation: true,     // SEGURANÇA: Isola scripts locais
-            sandbox: true               // SEGURANÇA: Ativa o modo Sandbox do Chromium
+            nodeIntegration: true,      // REATIVADO: Permite que o Front-end renderize o QR e os logs
+            contextIsolation: false     // REATIVADO: Comunicação direta com o backend
         }
     });
     mainWindow.loadURL('http://localhost:3000');
@@ -1070,11 +1067,9 @@ function createWindow() {
 
 const serverApp = express();
 
-// SEGURANÇA EXPRESS: Limitando tamanho do payload pra evitar DoS e escondendo o cabeçalho X-Powered-By
 serverApp.use(express.json({ limit: '1mb' })); 
 serverApp.disable('x-powered-by');
 
-// SEGURANÇA EXPRESS: Cabeçalhos básicos de segurança HTTP
 serverApp.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
@@ -1100,7 +1095,6 @@ serverApp.get('/status', (req, res) => {
     res.json({ connected: conectado, qr: lastQrBase64, botAtivo: botAtivo, modoSimplificado: botModoSimplificado });
 });
 
-// Endpoint opcional para o Front-end buscar os logs via Fetch já que o nodeIntegration está desligado
 serverApp.get('/logs', (req, res) => {
     res.json(systemLogs);
 });
@@ -1110,7 +1104,7 @@ serverApp.post('/simular', async (req, res) => {
         const { text } = req.body;
         const replies = []; 
         await processMessage('simulacao-ui', (text || '').toLowerCase().trim(), text || '', 
-            async (reply) => { replies.push(reply); }, { pushname: 'Testador', hasMedia: false } // Simulação de Mídia
+            async (reply) => { replies.push(reply); }, { pushname: 'Testador', hasMedia: false } 
         );
         res.json({ reply: replies.length > 0 ? replies.join('\n\n---\n\n') : 'O Mineirinho tá pensando...' });
     } catch (err) {
@@ -1121,10 +1115,30 @@ serverApp.post('/simular', async (req, res) => {
 
 serverApp.listen(3000, () => { console.log('🌐 Servidor Express rodando na porta 3000'); });
 
+// --- BUSCADOR DE NAVEGADOR (CORREÇÃO PARA BUILD COMPILADO) ---
+function getChromePath() {
+    const paths = [
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
+    ];
+    for (let p of paths) {
+        if (fs.existsSync(p)) return p;
+    }
+    return undefined; 
+}
+
+const browserPath = getChromePath();
+if (browserPath) {
+    console.log(`🌐 Navegador do sistema encontrado: ${browserPath}`);
+} else {
+    console.log('⚠️ Google Chrome não encontrado nos locais padrão. Usando Chromium interno...');
+}
+
 // --- CLIENTE WHATSAPP ---
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: authPath }),
     puppeteer: {
+        executablePath: browserPath, // Usa o Chrome nativo da máquina
         headless: true,
         args: [
             '--no-sandbox', 
@@ -1165,7 +1179,6 @@ client.on('message', async msg => {
         const chat = await msg.getChat();
         const contact = await msg.getContact();
         
-        // Passando explicitamente o hasMedia para o processMessage
         await processMessage(msg.from, msg.body.toLowerCase().trim(), msg.body, 
             async (response) => { await sendWithTyping(chat, response); }, 
             { pushname: contact.pushname, hasMedia: msg.hasMedia }
