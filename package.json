@@ -21,6 +21,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "natural": "6.12.0",
+    "node-thermal-printer": "^4.6.0",
     "qr-image": "^3.2.0",
     "qrcode-terminal": "^0.12.0",
     "whatsapp-web.js": "^1.34.7"
@@ -30,40 +31,40 @@
     "electron-builder": "^24.13.3"
   },
   "build": {
-  "appId": "com.bot.marmita",
-  "productName": "Bot Marmita",
-  "asar": true,
-  "compression": "maximum",
-  "directories": {
-    "output": "dist"
-  },
-  "files": [
-    "**/*",
-    "!dist/**/*",
-    "!.git/**/*",
-    "!.wwebjs_auth/**/*",
-    "!.wwebjs_cache/**/*"
-  ],
-  "extraResources": [
-    {
-      "from": ".env",
-      "to": ".env"
-    }
-  ],
-  "asarUnpack": [
-    "**/node_modules/puppeteer/**/*",
-    "**/.wwebjs_auth/**/*",
-    "**/.wwebjs_cache/**/*"
-  ],
-  "win": {
-    "target": [
+    "appId": "com.bot.marmita",
+    "productName": "Bot Marmita",
+    "asar": true,
+    "compression": "maximum",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!dist/**/*",
+      "!.git/**/*",
+      "!.wwebjs_auth/**/*",
+      "!.wwebjs_cache/**/*"
+    ],
+    "extraResources": [
       {
-        "target": "portable",
-        "arch": [
-          "x64"
-        ]
+        "from": ".env",
+        "to": ".env"
       }
-    ]
+    ],
+    "asarUnpack": [
+      "**/node_modules/puppeteer/**/*",
+      "**/.wwebjs_auth/**/*",
+      "**/.wwebjs_cache/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
   }
-}
 }

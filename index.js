@@ -1,8 +1,9 @@
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const { exec } = require('child_process'); // Para comandar o Windows nativamente
 
-// --- CARREGAMENTO DO .ENV (ROBUSTO) ---
+// --- CARREGAMENTO DO .ENV ---
 let envLog = "";
 function loadEnv() {
     const paths = [
@@ -11,7 +12,6 @@ function loadEnv() {
         path.join(process.resourcesPath, '.env'),
         path.join(__dirname, '.env')
     ];
-
     for (const p of paths) {
         if (fs.existsSync(p)) {
             require('dotenv').config({ path: p });
@@ -21,8 +21,23 @@ function loadEnv() {
     }
     return null;
 }
-
 loadEnv();
+
+// --- CONFIGURAÇÃO DE PASTAS E ESTADO GLOBAL ---
+const userDataPath = app.getPath('userData');
+const authPath = path.join(userDataPath, '.wwebjs_auth');
+const cachePath = path.join(userDataPath, '.wwebjs_cache');
+const contactsFilePath = path.join(userDataPath, 'contatos.json');
+const configFilePath = path.join(userDataPath, 'config.json');
+
+// Carrega as configurações locais
+let appConfig = { printerPath: '' };
+if (fs.existsSync(configFilePath)) {
+    try { appConfig = JSON.parse(fs.readFileSync(configFilePath, 'utf-8')); } catch(e){}
+}
+function saveConfig() {
+    fs.writeFileSync(configFilePath, JSON.stringify(appConfig, null, 2));
+}
 
 // CONFIGURAÇÃO DINÂMICA
 const getApiKey = () => (process.env.OPENROUTESERVICE_API_KEY || '').trim();
@@ -40,16 +55,12 @@ const natural = require('natural');
 const express = require('express');
 const qr = require('qr-image');
 
-// --- CONFIGURAÇÃO DE PASTAS E ESTADO GLOBAL ---
-const userDataPath = app.getPath('userData');
-const authPath = path.join(userDataPath, '.wwebjs_auth');
-const cachePath = path.join(userDataPath, '.wwebjs_cache');
-const contactsFilePath = path.join(userDataPath, 'contatos.json');
+const ThermalPrinter = require("node-thermal-printer").printer;
+const PrinterTypes = require("node-thermal-printer").types;
 
 let botAtivo = true;
-let botModoSimplificado = false; 
+let botModoSimplificado = true; 
 
-// Gerenciador de Logs 
 let systemLogs = [];
 function logSystem(message, type = 'info') {
     const logEntry = { timestamp: new Date().toLocaleTimeString(), message, type };
@@ -61,30 +72,26 @@ function logSystem(message, type = 'info') {
 
 let dbContatos = {};
 if (fs.existsSync(contactsFilePath)) {
-    try { dbContatos = JSON.parse(fs.readFileSync(contactsFilePath, 'utf-8')); } 
-    catch (err) { console.error('Erro ao ler contatos:', err.message); }
+    try { dbContatos = JSON.parse(fs.readFileSync(contactsFilePath, 'utf-8')); } catch (err) {}
 }
 
 function salvarContato(userId, nome) {
     dbContatos[userId] = { ...dbContatos[userId], nome, updatedAt: Date.now() };
-    try { fs.writeFileSync(contactsFilePath, JSON.stringify(dbContatos, null, 2)); } 
-    catch (err) { console.error('Erro ao salvar contato:', err.message); }
+    try { fs.writeFileSync(contactsFilePath, JSON.stringify(dbContatos, null, 2)); } catch (err) {}
 }
 
 function salvarEndereco(userId, endereco) {
     dbContatos[userId] = { ...dbContatos[userId], endereco, updatedAt: Date.now() };
-    try { fs.writeFileSync(contactsFilePath, JSON.stringify(dbContatos, null, 2)); } 
-    catch (err) { console.error('Erro ao salvar endereço:', err.message); }
+    try { fs.writeFileSync(contactsFilePath, JSON.stringify(dbContatos, null, 2)); } catch (err) {}
 }
 
 if (fs.existsSync(cachePath)) {
-    try { fs.rmSync(cachePath, { recursive: true, force: true }); } 
-    catch (err) { console.error('Erro ao limpar cache:', err.message); }
+    try { fs.rmSync(cachePath, { recursive: true, force: true }); } catch (err) {}
 }
 
-// CONFIGURAÇÃO
+// CONFIGURAÇÃO WHATSAPP E NLP
 const CARDAPIO_API_URL = 'https://protein-prep.lovable.app/api/public/cardapio-do-dia';
-const TIMEOUT_DURATION = 15 * 60 * 1000; // 15 minutos de inatividade encerra a sessão
+const TIMEOUT_DURATION = 15 * 60 * 1000; 
 const STARTUP_TIME = Math.floor(Date.now() / 1000);
 
 const userSessions = {};
@@ -95,6 +102,338 @@ const OPCOES_FIXAS = {
     feijao: ["Carioca", "Preto"],
     acompanhamentos: ["Macarrão", "Farofa", "Salada do dia"]
 };
+
+// ============================================================================
+// --- LÓGICA DE IMPRESSÃO HÍBRIDA (NOVO MOTOR) ---
+// ============================================================================
+
+function isA4Printer(name) {
+    if (!name) return false;
+    const lowerName = name.toLowerCase();
+    const keywords = ['pdf', 'a4', 'microsoft', 'hp', 'epson', 'canon', 'deskjet', 'laserjet', 'xps'];
+    return keywords.some(kw => lowerName.includes(kw));
+}
+
+function gerarHtmlComanda(session, isTest = false) {
+    let htmlContent = '';
+    
+    if (isTest) {
+        htmlContent = `
+            <div class="section">
+                <h3>Resumo do Pedido</h3>
+                <p><strong>1ª Marmita M</strong> - R$ 18,90</p>
+                <ul>
+                    <li>Arroz Branco, Feijão Preto</li>
+                    <li>Mistura: Frango Assado</li>
+                    <li>Acomp: Macarrão, Farofa</li>
+                    <li>Bebida: Coca Cola (R$ 5,00)</li>
+                </ul>
+            </div>
+            <div class="totals">
+                <p>Subtotal: R$ 23,90</p>
+                <p>Entrega: R$ 0,00</p>
+                <h3 style="color: #28a745;">TOTAL: R$ 23,90</h3>
+            </div>
+            <div class="section">
+                <h3>Dados do Cliente</h3>
+                <p><strong>Nome:</strong> Teste do Sistema</p>
+                <p><strong>Endereço:</strong> Simulação de Impressão A4/PDF - OK!</p>
+                <p><strong>Pagamento:</strong> Teste</p>
+            </div>
+        `;
+    } else {
+        let marmitasHtml = session.marmitasA_Montar.map(m => {
+            const preco = m.tipo === 'P' ? '16,90' : '18,90';
+            let acomp = m.acompanhamentos.join(', ');
+            let bebida = m.bebida ? `<li>Bebida: ${m.bebida.nome} (R$ ${m.bebida.preco.toFixed(2).replace('.',',')})</li>` : '';
+            return `
+                <p><strong>${m.index}ª Marmita ${m.tipo}</strong> - R$ ${preco}</p>
+                <ul>
+                    <li>Arroz ${m.arroz}, Feijão ${m.feijao}</li>
+                    <li>Mistura: ${m.proteina}</li>
+                    <li>Acomp: ${acomp}</li>
+                    ${bebida}
+                </ul>
+            `;
+        }).join('');
+
+        let trocoStr = (session.metodoPagamento === 'Dinheiro' && session.troco && session.troco !== 'Não precisa') 
+            ? `<p><strong>Troco para:</strong> ${session.troco}</p>` : '';
+
+        let agendamentoStr = session.horarioAgendado 
+            ? `<div style="background:#ffc107; padding:10px; text-align:center; font-weight:bold; margin-bottom:15px;">AGENDADO PARA: ${session.horarioAgendado}</div>` 
+            : '';
+
+        let compStr = session.endereco.complemento ? `<br>Comp: ${session.endereco.complemento}` : '';
+
+        htmlContent = `
+            ${agendamentoStr}
+            <div class="section">
+                <h3>Resumo do Pedido</h3>
+                ${marmitasHtml}
+            </div>
+            <div class="totals">
+                <p>Subtotal: R$ ${session.subtotal.toFixed(2).replace('.',',')}</p>
+                <p>Entrega: R$ ${session.taxaEntrega.toFixed(2).replace('.',',')}</p>
+                <h3 style="color: #28a745;">TOTAL: R$ ${session.totalPedido.toFixed(2).replace('.',',')}</h3>
+            </div>
+            <div class="section">
+                <h3>Dados do Cliente</h3>
+                <p><strong>Nome:</strong> ${session.nome}</p>
+                <p><strong>Pagamento:</strong> ${session.metodoPagamento.toUpperCase()}</p>
+                ${trocoStr}
+                <p><strong>Endereço de Entrega:</strong><br>
+                ${session.endereco.rua}, Nº ${session.endereco.numero} ${compStr}<br>
+                Bairro: ${session.endereco.bairro}</p>
+            </div>
+        `;
+    }
+
+    return `
+    <!DOCTYPE html>
+    <html lang="pt-BR">
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 40px; color: #333; background: #fff; }
+            .container { max-width: 800px; margin: 0 auto; border: 1px solid #ddd; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+            .header { text-align: center; border-bottom: 2px solid #eee; padding-bottom: 20px; margin-bottom: 30px; }
+            .header h1 { margin: 0; color: #d32f2f; font-size: 28px; }
+            .header p { margin: 5px 0 0 0; color: #777; font-size: 14px; }
+            .section { margin-bottom: 30px; }
+            .section h3 { border-bottom: 1px solid #eee; padding-bottom: 8px; color: #555; }
+            ul { margin-top: 5px; margin-bottom: 15px; padding-left: 20px; color: #555; }
+            .totals { background: #f8f9fa; padding: 20px; border-radius: 5px; text-align: right; margin-bottom: 30px; }
+            .totals p { margin: 5px 0; font-size: 16px; }
+            .totals h3 { margin: 10px 0 0 0; font-size: 24px; }
+            .footer { text-align: center; margin-top: 40px; color: #999; font-size: 12px; border-top: 1px solid #eee; padding-top: 20px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>ESTÂNCIA MINEIRA</h1>
+                <p>Comanda de Pedido (Via WhatsApp)</p>
+                <p>Data: ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')}</p>
+            </div>
+            ${htmlContent}
+            <div class="footer">
+                Obrigado pela preferência! Bom apetite. 🤠
+            </div>
+        </div>
+    </body>
+    </html>
+    `;
+}
+
+async function executarImpressaoHibrida(session, isTest, callbackThermal) {
+    let printerName = (appConfig.printerPath || process.env.PRINTER_INTERFACE || '').trim().replace(/['"]/g, '');
+    
+    if (!printerName) {
+        logSystem('Impressão ignorada: Impressora não selecionada.', 'warn');
+        return false;
+    }
+
+    // --- ROTA 1: IMPRESSORA A4 OU PDF ---
+    if (isA4Printer(printerName)) {
+        logSystem(`Modo A4/PDF ativado para: ${printerName}. Gerando layout web...`, 'info');
+        
+        return new Promise((resolve) => {
+            // Cria uma janela invisível (Fantasma)
+            let printWindow = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: true } });
+            const htmlString = gerarHtmlComanda(session, isTest);
+            
+            // Salva em arquivo temporário para garantir leitura perfeita
+            const tempHtmlFile = path.join(app.getPath('temp'), 'temp_print.html');
+            fs.writeFileSync(tempHtmlFile, htmlString, 'utf-8');
+
+            printWindow.loadURL(`file://${tempHtmlFile}`);
+            
+            printWindow.webContents.on('did-finish-load', () => {
+                try {
+                    printWindow.webContents.print({ silent: true, deviceName: printerName }, (success, failureReason) => {
+                        if (!success) {
+                            logSystem(`Erro nativo na impressão PDF/A4: ${failureReason}`, 'error');
+                        } else {
+                            logSystem(`Comanda enviada para ${printerName} com sucesso!`, 'success');
+                        }
+                        setTimeout(() => printWindow.close(), 2000); // Aguarda a fila processar antes de destruir
+                        resolve(success);
+                    });
+                } catch (err) {
+                    // Fallback para versões do Electron que não aceitam callback
+                    printWindow.webContents.print({ silent: true, deviceName: printerName });
+                    logSystem(`Comanda enviada para ${printerName} (Modo Fallback)`, 'success');
+                    setTimeout(() => printWindow.close(), 2000);
+                    resolve(true);
+                }
+            });
+        });
+    } 
+    
+    // --- ROTA 2: IMPRESSORA TÉRMICA (ESC/POS) ---
+    else {
+        logSystem(`Modo Térmico ativado para: ${printerName}. Gerando Buffer...`, 'info');
+        
+        let printer = new ThermalPrinter({
+            type: PrinterTypes.EPSON,
+            interface: 'buffer', // Evita o erro de C++
+            width: 48, 
+            removeSpecialCharacters: true,
+            lineCharacter: "="
+        });
+
+        try {
+            await callbackThermal(printer);
+            printer.cut();
+            try { printer.beep(); } catch(e){} 
+
+            const buffer = printer.getBuffer();
+            const tempFile = path.join(app.getPath('temp'), 'temp_print.bin');
+            fs.writeFileSync(tempFile, buffer);
+
+            let uncPath = printerName;
+            if (!uncPath.includes('\\\\') && !uncPath.includes('//')) {
+                uncPath = `\\\\localhost\\${printerName}`;
+            }
+
+            return new Promise((resolve) => {
+                exec(`copy /B "${tempFile}" "${uncPath}"`, (error, stdout, stderr) => {
+                    if (error) {
+                        logSystem(`Falha do Windows na impressão térmica: Caminho '${uncPath}' inválido.`, 'error');
+                        resolve(false);
+                    } else {
+                        logSystem(`Impressão térmica enviada com sucesso para a fila!`, 'success');
+                        resolve(true);
+                    }
+                });
+            });
+        } catch (error) {
+            logSystem(`Erro ao desenhar o cupom térmico: ${error.message}`, 'error');
+            return false;
+        }
+    }
+}
+
+// ============================================================================
+// --- FIM DA LÓGICA DE IMPRESSÃO ---
+// ============================================================================
+
+
+async function imprimirTeste() {
+    logSystem('Iniciando disparo de teste...', 'info');
+    await executarImpressaoHibrida(null, true, async (printer) => {
+        // Callback exclusivo para caso seja impressora Térmica
+        printer.alignCenter();
+        printer.bold(true);
+        printer.setTextSize(1, 1);
+        printer.println("ESTANCIA MINEIRA");
+        printer.setTextNormal();
+        printer.println("IMPRESSAO DE TESTE - SISTEMA OK");
+        printer.drawLine();
+
+        printer.alignLeft();
+        printer.bold(true);
+        printer.println(`CLIENTE: TESTE DO SISTEMA`);
+        printer.bold(false);
+        printer.println(`DATA: ${new Date().toLocaleDateString('pt-BR')} ${new Date().toLocaleTimeString('pt-BR')}`);
+        printer.drawLine();
+
+        printer.bold(true);
+        printer.println(`1a Marmita M - R$ 18.90`);
+        printer.bold(false);
+        printer.println(`- Arroz Branco, Feijao Preto`);
+        printer.println(`- Mistura: Frango Assado`);
+        printer.println(`- Acomp: Macarrao, Farofa`);
+        printer.println(`- Bebida: Coca Cola (R$ 5.00)`);
+        
+        printer.drawLine();
+        printer.alignRight();
+        printer.println(`Subtotal: R$ 23.90`);
+        printer.println(`Entrega: R$ 0.00`);
+        printer.bold(true);
+        printer.setTextSize(1, 1);
+        printer.println(`TOTAL: R$ 23.90`);
+        printer.setTextNormal();
+        printer.bold(false);
+        printer.drawLine();
+        printer.alignCenter();
+        printer.println("Se voce leu isso, sua impressora");
+        printer.println("esta configurada perfeitamente!");
+    });
+}
+
+async function imprimirComanda(session) {
+    await executarImpressaoHibrida(session, false, async (printer) => {
+        // Callback exclusivo para caso seja impressora Térmica
+        printer.alignCenter();
+        printer.bold(true);
+        printer.setTextSize(1, 1);
+        printer.println("ESTANCIA MINEIRA");
+        printer.setTextNormal();
+        printer.println("PEDIDO VIA WHATSAPP");
+        if (session.horarioAgendado) {
+            printer.bold(true);
+            printer.println(`AGENDADO PARA: ${session.horarioAgendado}`);
+            printer.bold(false);
+        }
+        printer.drawLine();
+
+        printer.alignLeft();
+        printer.bold(true);
+        printer.println(`CLIENTE: ${session.nome}`);
+        printer.bold(false);
+        printer.println(`DATA: ${new Date().toLocaleDateString('pt-BR')} ${new Date().toLocaleTimeString('pt-BR')}`);
+        printer.drawLine();
+
+        session.marmitasA_Montar.forEach(m => {
+            const precoMarmita = m.tipo === 'P' ? '16.90' : '18.90';
+            printer.bold(true);
+            printer.println(`${m.index}a Marmita ${m.tipo} - R$ ${precoMarmita}`);
+            printer.bold(false);
+            printer.println(`- Arroz ${m.arroz}, Feijao ${m.feijao}`);
+            printer.println(`- Mistura: ${m.proteina}`);
+            printer.println(`- Acomp: ${m.acompanhamentos.join(', ')}`);
+            if (m.bebida) {
+                printer.println(`- Bebida: ${m.bebida.nome} (R$ ${m.bebida.preco.toFixed(2)})`);
+            }
+            printer.println(" "); 
+        });
+
+        printer.drawLine();
+        printer.alignRight();
+        printer.println(`Subtotal: R$ ${session.subtotal.toFixed(2)}`);
+        printer.println(`Entrega: R$ ${session.taxaEntrega.toFixed(2)}`);
+        printer.bold(true);
+        printer.setTextSize(1, 1);
+        printer.println(`TOTAL: R$ ${session.totalPedido.toFixed(2)}`);
+        printer.setTextNormal();
+        printer.bold(false);
+        printer.drawLine();
+
+        printer.alignLeft();
+        printer.bold(true);
+        printer.println(`PAGAMENTO: ${session.metodoPagamento.toUpperCase()}`);
+        if (session.metodoPagamento === 'Dinheiro' && session.troco && session.troco !== 'Não precisa') {
+            printer.println(`LEVAR TROCO PARA: ${session.troco}`);
+        }
+        printer.bold(false);
+        printer.drawLine();
+        
+        printer.alignCenter();
+        printer.bold(true);
+        printer.println("ENDERECO DE ENTREGA");
+        printer.bold(false);
+        printer.alignLeft();
+        printer.println(`${session.endereco.rua}, ${session.endereco.numero}`);
+        if (session.endereco.complemento) printer.println(`Comp: ${session.endereco.complemento}`);
+        printer.println(`Bairro: ${session.endereco.bairro}`);
+        
+        printer.drawLine();
+        printer.alignCenter();
+        printer.println("Obrigado pela preferencia!");
+    });
+}
 
 // --- CACHE E LÓGICA DE HORÁRIOS DA API ---
 let cacheHorarios = null;
@@ -109,7 +448,6 @@ async function getHorariosFuncionamento() {
         ultimaAtualizacaoHorarios = Date.now();
         return cacheHorarios;
     } catch (error) {
-        logSystem('Erro ao buscar horários. Fallback padrão acionado.', 'warn');
         return {
             "0": { ativo: false, abertura: "11:00", fechamento: "14:30" }, "1": { ativo: true, abertura: "11:00", fechamento: "14:30" },
             "2": { ativo: true, abertura: "11:00", fechamento: "14:30" }, "3": { ativo: true, abertura: "11:00", fechamento: "14:30" },
@@ -232,28 +570,19 @@ function extrairQuantidades(text) {
 
 function parsePedidoSimplificado(texto, proteinasDisponiveis, bebidasDisponiveis) {
     let t = texto.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    
     let arroz = "Branco";
     if (t.includes("colorido")) arroz = "Colorido";
-    
     let feijao = "Carioca";
     if (t.includes("preto")) feijao = "Preto";
-    
     let proteinaEncontrada = "Não identificada";
     for (let p of proteinasDisponiveis) {
         let pNorm = p.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        if (t.includes(pNorm)) {
-            proteinaEncontrada = p;
-            break;
-        } else {
+        if (t.includes(pNorm)) { proteinaEncontrada = p; break; } 
+        else {
             let palavrasChave = pNorm.split(' ').filter(w => w.length >= 4 || w === 'ovo' || w === 'bife');
-            if (palavrasChave.some(w => t.includes(w))) {
-                proteinaEncontrada = p;
-                break;
-            }
+            if (palavrasChave.some(w => t.includes(w))) { proteinaEncontrada = p; break; }
         }
     }
-    
     let acompanhamentos = [];
     if (t.includes("macarrao") || t.includes("espaguete") || t.includes("massa")) acompanhamentos.push("Macarrão");
     if (t.includes("farofa")) acompanhamentos.push("Farofa");
@@ -268,7 +597,6 @@ function parsePedidoSimplificado(texto, proteinasDisponiveis, bebidasDisponiveis
             break;
         }
     }
-    
     return { arroz, feijao, proteina: proteinaEncontrada, acompanhamentos, bebida: bebidaObj };
 }
 
@@ -1028,6 +1356,7 @@ async function processMessage(userId, text, rawBody, replyFunc, contactInfo = {}
                 } else {
                     msgFinal += `\n\n*A Estância Mineira te agradece demais da conta pela preferência! Um abração!*`;
                     await replyFunc(msgFinal);
+                    imprimirComanda(session).catch(err => logSystem(`Erro impressão final: ${err.message}`, 'error'));
                     delete userSessions[userId];
                 }
             } else if (isNegativeIntent(text)) {
@@ -1040,6 +1369,7 @@ async function processMessage(userId, text, rawBody, replyFunc, contactInfo = {}
             const keywordsConf = ['ok', 'mandei', 'ta ai', 'tá ai', 'tá aí', 'pronto', 'enviei', 'feito'];
             if (contactInfo.hasMedia || keywordsConf.some(kw => text.includes(kw)) || isPositiveIntent(text)) {
                 await replyFunc('Comprovante recebido com sucesso, sô! Muito obrigado pela preferência. Seu pedido já tá no fogo! 🔥🤠');
+                imprimirComanda(session).catch(err => logSystem(`Erro impressão final PIX: ${err.message}`, 'error'));
                 delete userSessions[userId];
             } else {
                 await replyFunc('Tô aguardando a foto ou arquivo do comprovante do PIX pra liberar seu pedido pra cozinha, sô! 📸 (Se já enviou, só me manda um "ok")');
@@ -1048,7 +1378,7 @@ async function processMessage(userId, text, rawBody, replyFunc, contactInfo = {}
     }
 }
 
-// --- CONFIGURAÇÃO DO ELECTRON E EXPRESS ---
+// --- CONFIGURAÇÃO DO ELECTRON E EXPRESS COM BOAS PRÁTICAS DE SEGURANÇA ---
 let mainWindow;
 let conectado = false;
 let lastQrBase64 = null; 
@@ -1057,8 +1387,8 @@ function createWindow() {
     mainWindow = new BrowserWindow({
         width: 900, height: 850, autoHideMenuBar: true,
         webPreferences: { 
-            nodeIntegration: true,      // REATIVADO: Permite que o Front-end renderize o QR e os logs
-            contextIsolation: false     // REATIVADO: Comunicação direta com o backend
+            nodeIntegration: true,     
+            contextIsolation: false     
         }
     });
     mainWindow.loadURL('http://localhost:3000');
@@ -1078,6 +1408,40 @@ serverApp.use((req, res, next) => {
 
 serverApp.use(express.static(path.join(__dirname, 'public')));
 serverApp.use(express.static(path.join(__dirname, 'web')));
+
+// Rotas da Interface
+serverApp.get('/printers', async (req, res) => {
+    try {
+        if (mainWindow) {
+            const printers = await mainWindow.webContents.getPrintersAsync();
+            res.json({ success: true, printers: printers.map(p => p.name) });
+        } else {
+            res.json({ success: false, error: 'Janela não carregada ainda' });
+        }
+    } catch (err) {
+        res.json({ success: false, error: err.message });
+    }
+});
+
+serverApp.get('/config/printer', (req, res) => {
+    res.json({ printerPath: appConfig.printerPath || process.env.PRINTER_INTERFACE || '' });
+});
+
+serverApp.post('/config/printer', (req, res) => {
+    appConfig.printerPath = req.body.printerPath;
+    saveConfig();
+    logSystem(`Impressora selecionada e salva: ${appConfig.printerPath}`, 'info');
+    res.json({ success: true });
+});
+
+serverApp.post('/test-print', async (req, res) => {
+    try {
+        await imprimirTeste();
+        res.json({ success: true });
+    } catch (err) {
+        res.json({ success: false, error: err.message });
+    }
+});
 
 serverApp.post('/toggle-bot', (req, res) => {
     botAtivo = req.body.ativo;
@@ -1115,7 +1479,7 @@ serverApp.post('/simular', async (req, res) => {
 
 serverApp.listen(3000, () => { console.log('🌐 Servidor Express rodando na porta 3000'); });
 
-// --- BUSCADOR DE NAVEGADOR (CORREÇÃO PARA BUILD COMPILADO) ---
+// --- BUSCADOR DE NAVEGADOR ---
 function getChromePath() {
     const paths = [
         'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
@@ -1138,7 +1502,7 @@ if (browserPath) {
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: authPath }),
     puppeteer: {
-        executablePath: browserPath, // Usa o Chrome nativo da máquina
+        executablePath: browserPath, 
         headless: true,
         args: [
             '--no-sandbox', 

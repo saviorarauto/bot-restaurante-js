@@ -39,11 +39,16 @@
         font-weight: bold;
       }
 
-      .online {
-        color: green;
-      }
-      .offline {
-        color: red;
+      .online { color: green; }
+      .offline { color: red; }
+
+      .printer-panel {
+        margin-top: 15px; 
+        text-align: left; 
+        background: #e9ecef; 
+        padding: 15px; 
+        border-radius: 8px;
+        border: 1px solid #ced4da;
       }
     </style>
   </head>
@@ -51,97 +56,42 @@
   <body>
     <div class="card">
       <h1>🤠 Mineirinho Bot</h1>
-      <img id="qr" src="/qr.png" />
+      <img id="qr" src="/qr.png" style="display: none;" />
 
       <div class="status" id="status">Verificando conexão...</div>
 
       <div style="margin-top: 15px">
-        <button
-          id="toggleBotBtn"
-          onclick="toggleBot()"
-          style="
-            background-color: #28a745;
-            color: white;
-            border: none;
-            padding: 12px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-weight: bold;
-            width: 100%;
-            transition: 0.3s;
-          "
-        >
+        <button id="toggleBotBtn" onclick="toggleBot()" style="background-color: #28a745; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; font-weight: bold; width: 100%; transition: 0.3s;">
           🟢 Robô Ativado (Clique para Pausar)
         </button>
       </div>
 
       <div style="margin-top: 15px">
-        <button
-          id="toggleModeBtn"
-          onclick="toggleMode()"
-          style="
-            background-color: #007bff;
-            color: white;
-            border: none;
-            padding: 12px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-weight: bold;
-            width: 100%;
-            transition: 0.3s;
-          "
-        >
-          📋 Modo: Completo (Clique para Simplificar)
+        <button id="toggleModeBtn" onclick="toggleMode()" style="background-color: #17a2b8; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; font-weight: bold; width: 100%; transition: 0.3s;">
+          ⚡ Modo: Simplificado (Clique p/ Completo)
         </button>
       </div>
 
+      <div class="printer-panel">
+        <label style="font-weight: bold; font-size: 14px; color: #333;">🖨️ Selecione sua Impressora</label>
+        
+        <select id="printerSelect" onchange="salvarImpressora()" style="width: 100%; padding: 10px; margin-top: 8px; border-radius: 4px; border: 1px solid #ccc; box-sizing: border-box; font-size: 14px; cursor: pointer;">
+          <option value="">Carregando impressoras...</option>
+        </select>
+
+        <div style="display: flex; gap: 10px; margin-top: 10px;">
+          <button onclick="imprimirTeste()" style="background-color: #ffc107; color: black; border: none; padding: 10px; border-radius: 4px; cursor: pointer; flex: 1; font-weight: bold;">📝 Testar Impressão</button>
+        </div>
+      </div>
+
       <div style="margin-top: 15px">
-        <button
-          onclick="window.location.href='/simulacao.html'"
-          style="
-            background-color: #075e54;
-            color: white;
-            border: none;
-            padding: 12px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-weight: bold;
-            width: 100%;
-            transition: 0.3s;
-          "
-        >
+        <button onclick="window.location.href='/simulacao.html'" style="background-color: #075e54; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; font-weight: bold; width: 100%; transition: 0.3s;">
           🧪 Abrir Modo Simulação
         </button>
       </div>
 
-      <div
-        id="logs-container"
-        style="
-          margin: 30px auto 0 auto;
-          box-sizing: border-box;
-          width: 100%;
-          background: #333;
-          color: #0f0;
-          font-family: monospace;
-          padding: 15px;
-          border-radius: 8px;
-          text-align: left;
-          font-size: 12px;
-          height: 150px;
-          overflow-y: auto;
-          box-shadow: inset 0 0 10px #000;
-        "
-      >
-        <div
-          style="
-            border-bottom: 1px solid #444;
-            padding-bottom: 5px;
-            margin-bottom: 5px;
-            font-weight: bold;
-            display: flex;
-            justify-content: space-between;
-          "
-        >
+      <div id="logs-container" style="margin: 30px auto 0 auto; box-sizing: border-box; width: 100%; background: #333; color: #0f0; font-family: monospace; padding: 15px; border-radius: 8px; text-align: left; font-size: 12px; height: 150px; overflow-y: auto; box-shadow: inset 0 0 10px #000;">
+        <div style="border-bottom: 1px solid #444; padding-bottom: 5px; margin-bottom: 5px; font-weight: bold; display: flex; justify-content: space-between;">
           <span>🖥️ LOGS DO SISTEMA</span>
           <span id="log-status" style="color: #888">Monitorando...</span>
         </div>
@@ -156,16 +106,10 @@
 
         ipcRenderer.on("system-log", (event, log) => {
           const div = document.createElement("div");
-          div.style.color =
-            log.type === "error"
-              ? "#ff5555"
-              : log.type === "warn"
-              ? "#ffff55"
-              : "#00ff00";
+          div.style.color = log.type === "error" ? "#ff5555" : log.type === "warn" ? "#ffff55" : "#00ff00";
           div.innerHTML = `[${log.timestamp}] ${log.message}`;
           logContent.appendChild(div);
-          logContent.parentElement.scrollTop =
-            logContent.parentElement.scrollHeight;
+          logContent.parentElement.scrollTop = logContent.parentElement.scrollHeight;
         });
       } catch (e) {
         console.log("Não está rodando em ambiente Electron.");
@@ -174,7 +118,64 @@
 
     <script>
       let isBotAtivo = true;
-      let isModoSimplificado = false; // Estado local do modo
+      let isModoSimplificado = true; // Inicia como SIMPLIFICADO por padrão
+
+      async function carregarListaImpressoras() {
+        try {
+          const res = await fetch('/printers');
+          const data = await res.json();
+          const select = document.getElementById('printerSelect');
+          select.innerHTML = '<option value="">Selecione a impressora...</option>';
+          
+          if (data.success && data.printers) {
+            data.printers.forEach(p => {
+              const opt = document.createElement('option');
+              opt.value = p;
+              opt.text = p;
+              select.appendChild(opt);
+            });
+          }
+        } catch(e) {
+          console.error("Erro ao listar impressoras:", e);
+        }
+      }
+
+      async function carregarConfiguracoesIniciais() {
+        await carregarListaImpressoras(); 
+        try {
+          const res = await fetch('/config/printer');
+          const data = await res.json();
+          if (data.printerPath) {
+            document.getElementById('printerSelect').value = data.printerPath; 
+          }
+        } catch(e) { console.error("Erro ao carregar configurações:", e); }
+      }
+
+      // Função agora salva silenciosamente, sem dar Alert
+      async function salvarImpressora() {
+        const path = document.getElementById('printerSelect').value;
+        try {
+          await fetch('/config/printer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ printerPath: path })
+          });
+          console.log("Impressora salva com sucesso!");
+        } catch(e) {
+          console.error("Erro ao tentar salvar a impressora.");
+        }
+      }
+
+      async function imprimirTeste() {
+        try {
+          const res = await fetch('/test-print', { method: 'POST' });
+          const data = await res.json();
+          if(data.success) alert("🖨️ Comando enviado! A impressora deve responder em instantes.");
+          else alert("❌ Erro: " + (data.error || "Verifique se a impressora está ligada."));
+        } catch(e) {
+          alert("❌ Erro de comunicação com o sistema.");
+        }
+      }
 
       async function atualizarStatus() {
         const res = await fetch("/status");
@@ -198,13 +199,8 @@
           }
         }
 
-        if (data.botAtivo !== undefined && data.botAtivo !== isBotAtivo)
-          atualizarBotaoVisual(data.botAtivo);
-        if (
-          data.modoSimplificado !== undefined &&
-          data.modoSimplificado !== isModoSimplificado
-        )
-          atualizarBotaoModoVisual(data.modoSimplificado);
+        if (data.botAtivo !== undefined && data.botAtivo !== isBotAtivo) atualizarBotaoVisual(data.botAtivo);
+        if (data.modoSimplificado !== undefined && data.modoSimplificado !== isModoSimplificado) atualizarBotaoModoVisual(data.modoSimplificado);
       }
 
       function atualizarBotaoVisual(ativo) {
@@ -223,10 +219,10 @@
         isModoSimplificado = simplificado;
         const btn = document.getElementById("toggleModeBtn");
         if (simplificado) {
-          btn.style.backgroundColor = "#17a2b8"; // Azul claro
+          btn.style.backgroundColor = "#17a2b8"; 
           btn.innerHTML = "⚡ Modo: Simplificado (Clique p/ Completo)";
         } else {
-          btn.style.backgroundColor = "#007bff"; // Azul escuro
+          btn.style.backgroundColor = "#007bff"; 
           btn.innerHTML = "📋 Modo: Completo (Clique p/ Simplificado)";
         }
       }
@@ -235,32 +231,25 @@
         isBotAtivo = !isBotAtivo;
         try {
           const res = await fetch("/toggle-bot", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ativo: isBotAtivo }),
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ativo: isBotAtivo }),
           });
           const data = await res.json();
           atualizarBotaoVisual(data.botAtivo);
-        } catch (e) {
-          alert("Erro ao pausar/ativar o robô!");
-        }
+        } catch (e) { alert("Erro ao pausar/ativar o robô!"); }
       }
 
       async function toggleMode() {
         isModoSimplificado = !isModoSimplificado;
         try {
           const res = await fetch("/toggle-mode", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ simplificado: isModoSimplificado }),
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ simplificado: isModoSimplificado }),
           });
           const data = await res.json();
           atualizarBotaoModoVisual(data.modoSimplificado);
-        } catch (e) {
-          alert("Erro ao trocar o modo!");
-        }
+        } catch (e) { alert("Erro ao trocar o modo!"); }
       }
 
+      carregarConfiguracoesIniciais();
       setInterval(atualizarStatus, 2000);
       atualizarStatus();
     </script>
